@@ -21,6 +21,9 @@ function M.snapshot()
 end
 
 local subcommands = {
+  [""] = function()
+    require("strata.ui").file_history()
+  end,
   snapshot = function()
     M.snapshot()
   end,
@@ -39,7 +42,9 @@ end
 
 ---@return string[]
 function M.complete()
-  return vim.tbl_keys(subcommands)
+  return vim.tbl_filter(function(k)
+    return k ~= ""
+  end, vim.tbl_keys(subcommands))
 end
 
 return M

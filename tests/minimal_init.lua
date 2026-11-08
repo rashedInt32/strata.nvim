@@ -9,3 +9,4 @@ require("mini.test").setup()
 -- Let tests `require("tests.helpers")`.
 package.path = root .. "/?.lua;" .. root .. "/?/init.lua;" .. package.path
 vim.o.more = false
+vim.opt.shortmess:append("W")

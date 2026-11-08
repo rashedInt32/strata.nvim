@@ -38,7 +38,7 @@ newest on top.
 | `external` | `BufWritePre`, disk hash ≠ last known     | file on disk     |
 | `unsaved`  | `FileChangedShell` on a modified buffer, `FocusLost`, `VimLeavePre` | buffer text |
 | `manual`   | `:Strata snapshot`                        | buffer text      |
-| `restore`  | taken right before a restore overwrites   | current content  |
+| `restore`  | the content a restore wrote                | snapshot content |
 
 A snapshot is skipped when the content hash equals the latest entry for that
 path, when `buftype` is not empty, when the file matches an exclude glob, is
@@ -71,8 +71,10 @@ the store; the list is additive by config.
   resolved project root. Anything else is refused with a message.
 - If the file is loaded in a buffer, lines are set through the API, so `u`
   undoes the restore. Otherwise the file is written to disk.
-- The current content is snapshotted as `restore` first, so a restore is
-  itself reversible from the history.
+- Unsaved buffer text is snapshotted as `unsaved` first (saved text is already
+  in the log), and the written content is logged as `restore`, so a restore is
+  itself reversible from the history. The write skips autocmds: a restore puts
+  back the exact snapshot, with no format-on-save.
 
 ## UI
 
