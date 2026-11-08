@@ -10,17 +10,13 @@ local M = {}
 function M.file(s, rel)
   local out = {}
   local es = s:entries()
-  local seen_snapshot = false
   for i = #es, 1, -1 do
     local e = es[i]
-    if e.p == rel then
-      out[#out + 1] = e
-      seen_snapshot = true
-    elseif e.e == "label" and seen_snapshot then
+    if e.p == rel or e.e == "label" then
       out[#out + 1] = e
     end
   end
-  -- drop trailing labels older than the first snapshot
+  -- labels older than the first snapshot say nothing about this file
   while #out > 0 and out[#out].e == "label" do
     out[#out] = nil
   end

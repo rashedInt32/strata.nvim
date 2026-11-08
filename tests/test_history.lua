@@ -40,6 +40,10 @@ T["file history is newest first and carries labels between snapshots"] = functio
   )
   eq(history.file(s, "c.lua")[1].e, "save")
   eq(#history.file(s, "c.lua"), 1)
+  -- a label newer than the last snapshot sits on top
+  s:label("after", 400)
+  eq(history.file(s, "c.lua")[1].l, "after")
+  eq(#history.file(s, "c.lua"), 2)
 end
 
 T["state_at picks the latest entry up to a time"] = function()
