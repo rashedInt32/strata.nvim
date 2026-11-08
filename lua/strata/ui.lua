@@ -238,4 +238,53 @@ function M.file_history()
   })
 end
 
+--- Deleted files with a snapshot. Pick one to put it back.
+---@param s strata.Store
+function M.recover(s)
+  local gone = history.deleted(s)
+  if #gone == 0 then
+    return notify("no deleted files with history under " .. s.root)
+  end
+  local lines = {}
+  for i, g in ipairs(gone) do
+    lines[i] = ("%s  %6s  %s"):format(M.fmt_time(g.entry.t), M.fmt_size(g.entry.s), g.p)
+  end
+  M.list({
+    title = "deleted files",
+    lines = lines,
+    actions = {
+      open = function(idx)
+        local g = gone[idx]
+        if g then
+          M.open(s, g.p, g.entry)
+        end
+      end,
+      diff = function(idx)
+        local g = gone[idx]
+        if g then
+          M.open(s, g.p, g.entry)
+        end
+      end,
+      restore = function(idx)
+        local g = gone[idx]
+        if not g then
+          return
+        end
+        local content = s:get(g.entry.h)
+        if not content then
+          return notify("snapshot content is gone", vim.log.levels.ERROR)
+        end
+        M.close()
+        local ok, err = restore.apply(s, g.p, content)
+        if ok then
+          notify("recovered " .. g.p)
+          vim.cmd.edit(vim.fn.fnameescape(vim.fs.joinpath(s.root, g.p)))
+        else
+          notify(err, vim.log.levels.ERROR)
+        end
+      end,
+    },
+  })
+end
+
 return M

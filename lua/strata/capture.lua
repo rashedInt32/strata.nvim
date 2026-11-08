@@ -14,6 +14,7 @@ function M.setup(c)
   cfg = c
   compiled = nil
   stores = {}
+  listeners = {}
 end
 
 function M.config()
@@ -62,6 +63,20 @@ function M.store_for(root)
     stores[root] = s
   end
   return s
+end
+
+--- Store for the current buffer's project, else for the cwd's project.
+---@return strata.Store?
+function M.current_store()
+  local abs = M.path_of(vim.api.nvim_get_current_buf())
+  local root
+  if abs then
+    root = M.root_of(abs)
+  else
+    local cwd = vim.fs.normalize(vim.fn.getcwd())
+    root = vim.fs.root(cwd, cfg.root_markers) or cwd
+  end
+  return M.store_for(root)
 end
 
 --- Store and relative path for an absolute file path.
