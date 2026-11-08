@@ -5,3 +5,7 @@ vim.opt.rtp:prepend(root .. "/deps/mini.nvim")
 vim.o.swapfile = false
 
 require("mini.test").setup()
+
+-- Let tests `require("tests.helpers")`.
+package.path = root .. "/?.lua;" .. root .. "/?/init.lua;" .. package.path
+vim.o.more = false
