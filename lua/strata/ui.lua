@@ -287,4 +287,157 @@ function M.recover(s)
   })
 end
 
+--- quilt.nvim hits for the changed ranges of modified files, in the current file.
+---@param s strata.Store
+---@param changes strata.Change[]
+---@return table[] hits { path, row, end_row } 0-based, end-exclusive
+function M.hits(s, changes)
+  local hits = {}
+  for _, c in ipairs(changes) do
+    if c.kind == "modified" then
+      local abs = vim.fs.joinpath(s.root, c.p)
+      local old = s:get(c.was.h)
+      local new = require("strata.store")._read_file(abs)
+      if old and new then
+        local total = select(2, new:gsub("\n", "")) + (new:sub(-1) == "\n" and 0 or 1)
+        for _, h in ipairs(vim.diff(old, new, { result_type = "indices" }) or {}) do
+          local sb, cb = h[3], h[4]
+          local row, end_row
+          if cb == 0 then
+            -- a pure deletion: mark the line that now follows it (or the last line)
+            row = math.max(0, math.min(sb, total - 1))
+            end_row = row + 1
+          else
+            row, end_row = sb - 1, sb - 1 + cb
+          end
+          hits[#hits + 1] = { path = abs, row = row, end_row = end_row }
+        end
+      end
+    end
+  end
+  return hits
+end
+
+--- Files changed since `t`, with per-file and whole-set restore.
+---@param s strata.Store
+---@param t integer
+---@param title string
+function M.changes(s, t, title)
+  local ch = history.changed_since(s, t)
+  if #ch == 0 then
+    return notify("nothing changed since " .. vim.trim(M.fmt_time(t)))
+  end
+  local lines = {}
+  for i, c in ipairs(ch) do
+    lines[i] = ("%-9s %s"):format(c.kind, c.p)
+  end
+  local function put(c)
+    if not c.was then
+      return false
+    end
+    local content = s:get(c.was.h)
+    if not content then
+      return false
+    end
+    return (restore.apply(s, c.p, content))
+  end
+  local function show(idx, how)
+    local c = ch[idx]
+    if not c then
+      return
+    end
+    if c.kind == "modified" then
+      how(s, c.p, c.was)
+    elseif c.kind == "deleted" then
+      M.open(s, c.p, c.was)
+    else
+      M.close()
+      notify(c.p .. " did not exist then")
+      vim.cmd.edit(vim.fn.fnameescape(vim.fs.joinpath(s.root, c.p)))
+    end
+  end
+  M.list({
+    title = title,
+    lines = lines,
+    actions = {
+      diff = function(idx)
+        show(idx, M.diff)
+      end,
+      open = function(idx)
+        show(idx, M.open)
+      end,
+      restore = function(idx)
+        local c = ch[idx]
+        if not c then
+          return
+        end
+        M.close()
+        if c.kind == "added" then
+          return notify(c.p .. " did not exist then; nothing to restore (strata never deletes)")
+        end
+        local ok = put(c)
+        notify(ok and ("restored " .. c.p) or ("could not restore " .. c.p), ok and nil or vim.log.levels.ERROR)
+      end,
+      restore_all = function()
+        M.close()
+        local n, skipped = 0, 0
+        for _, c in ipairs(ch) do
+          if c.kind == "added" then
+            skipped = skipped + 1
+          elseif put(c) then
+            n = n + 1
+          end
+        end
+        local msg = ("restored %d file(s) to %s"):format(n, vim.trim(M.fmt_time(t)))
+        if skipped > 0 then
+          msg = msg .. (", %d added since were left in place"):format(skipped)
+        end
+        notify(msg)
+      end,
+      quilt = function()
+        local ok, quilt = pcall(require, "quilt")
+        if not ok then
+          return notify("quilt.nvim is not installed", vim.log.levels.WARN)
+        end
+        local hits = M.hits(s, ch)
+        M.close()
+        if #hits == 0 then
+          return notify("no modified files to show")
+        end
+        quilt.open_hits(hits, "strata: since " .. vim.trim(M.fmt_time(t)))
+      end,
+    },
+  })
+end
+
+--- Timeline of the project: labels and snapshot groups, newest first.
+---@param s strata.Store
+function M.project(s)
+  local tl = history.timeline(s)
+  if #tl == 0 then
+    return notify("no history yet under " .. s.root)
+  end
+  local lines, hl = {}, {}
+  for i, p in ipairs(tl) do
+    if p.kind == "label" then
+      lines[i] = ("%s  ── %s"):format(M.fmt_time(p.t), p.text)
+      hl[#hl + 1] = { i, "Title" }
+    else
+      lines[i] = ("%s  %d file%s"):format(M.fmt_time(p.t), p.count, p.count == 1 and "" or "s")
+    end
+  end
+  local drill = function(idx)
+    local p = tl[idx]
+    if p then
+      M.changes(s, p.t, "changed since " .. vim.trim(M.fmt_time(p.t)))
+    end
+  end
+  M.list({
+    title = vim.fn.fnamemodify(s.root, ":t"),
+    lines = lines,
+    hl = hl,
+    actions = { diff = drill, open = drill, restore = drill },
+  })
+end
+
 return M

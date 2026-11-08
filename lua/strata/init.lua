@@ -14,15 +14,21 @@ function M.setup(opts)
   local capture = require("strata.capture")
   capture.setup(M.config)
   capture.attach()
-  if M.config.git_labels then
-    local watched = {}
-    capture.on_snapshot(function(s)
-      if not watched[s.root] then
-        watched[s.root] = true
-        require("strata.labels").watch(s)
-      end
-    end)
-  end
+  -- First snapshot per store this session: start the git watcher and prune later.
+  local seen = {}
+  local cfg = M.config
+  capture.on_snapshot(function(s)
+    if seen[s.root] then
+      return
+    end
+    seen[s.root] = true
+    if cfg.git_labels then
+      require("strata.labels").watch(s)
+    end
+    vim.defer_fn(function()
+      require("strata.prune").run(s, cfg)
+    end, 3000)
+  end)
 end
 
 --- Snapshot the current buffer by hand.
@@ -61,6 +67,23 @@ local subcommands = {
     if s then
       require("strata.ui").recover(s)
     end
+  end,
+  project = function()
+    local s = require("strata.capture").current_store()
+    if s then
+      require("strata.ui").project(s)
+    end
+  end,
+  prune = function()
+    local stores, dropped = require("strata.prune").run_all(M.config)
+    notify(
+      ("pruned %d entr%s across %d store%s"):format(
+        dropped,
+        dropped == 1 and "y" or "ies",
+        stores,
+        stores == 1 and "" or "s"
+      )
+    )
   end,
 }
 
