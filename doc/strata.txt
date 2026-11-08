@@ -1,0 +1,165 @@
+*strata.txt*  Local history for Neovim
+
+Author: rashed parvez
+License: MIT
+
+==============================================================================
+CONTENTS                                                      *strata-contents*
+
+  1. Introduction ............................................ |strata-intro|
+  2. Commands ............................................. |strata-commands|
+  3. Keys in the lists ........................................ |strata-keys|
+  4. Configuration .......................................... |strata-config|
+  5. How it works .......................................... |strata-storage|
+  6. Limits ................................................. |strata-limits|
+
+==============================================================================
+1. INTRODUCTION                                                  *strata-intro*
+
+strata keeps a copy of every file you open or save, in a store outside the
+project, and lets you get it back. Persistent undo stops helping once a file
+changes outside Neovim: a `git checkout`, a `git reset --hard`, a formatter
+or an agent rewriting files, or a deleted file. strata covers those.
+
+Snapshots are taken on:
+
+  open      `BufReadPost`, the file as it was when opened
+  save      `BufWritePost`
+  external  `BufWritePre`, when the disk copy differs from the last snapshot:
+            something else changed the file and the write is about to
+            overwrite it
+  unsaved   modified buffers on `FocusLost`, `VimLeavePre`, and when
+            `FileChangedShell` fires on a modified buffer
+  manual    |:Strata| `snapshot`
+  restore   the content a restore wrote
+
+A snapshot is skipped when the content equals the latest one for that path,
+when 'buftype' is not empty, when the path matches an exclude glob, when the
+file is larger than `max_size`, or when it contains a NUL byte.
+
+Nothing runs while idle. There are no timers and no polling. The only
+long-lived handle is one filesystem watch on `.git` per project, used for
+labels.
+
+==============================================================================
+2. COMMANDS                                                   *strata-commands*
+
+                                                                      *:Strata*
+:Strata                 History of the current file, newest first. Labels set
+                        between snapshots appear as rows.
+
+:Strata recover         Files that have snapshots but are missing on disk.
+                        Picking one writes its latest snapshot back and opens
+                        it.
+
+:Strata project         Timeline of the project: labels and snapshot groups
+                        (one group per minute), newest first. Picking a row
+                        lists every file whose state at that moment differs
+                        from the disk now, as `modified`, `deleted` or
+                        `added`.
+
+:Strata label {text}    Add a label at the current time.
+
+:Strata snapshot        Snapshot the current buffer text by hand.
+
+:Strata prune           Apply retention to every store now. See `keep_days`
+                        and `max_per_file`.
+
+The project is the directory found by `vim.fs.root()` with `root_markers`
+for the current file, or for the current directory when the buffer has no
+file. Without a marker the file's own directory is the project.
+
+==============================================================================
+3. KEYS IN THE LISTS                                              *strata-keys*
+
+Every list is a floating window. Defaults:
+
+  <CR>   diff          file history: diff the snapshot against the buffer in
+                       a vertical split. `q` in the snapshot closes the diff.
+                       project: drill into a timeline row. changes: diff that
+                       file, or open the snapshot of a deleted one.
+  o      open          open the snapshot read-only in a split
+  r      restore       put the snapshot back
+  R      restore_all   changes list only: restore every modified and deleted
+                       file to that moment. Files added since are left alone;
+                       strata never deletes.
+  Q      quilt         changes list only: open the changed ranges of every
+                       modified file in quilt.nvim, when it is installed
+  q      close         also <Esc>
+
+Restore goes through the buffer when the file is loaded, so `u` undoes it,
+and writes the exact snapshot with `noautocmd`, so format-on-save does not
+alter it. Unsaved buffer text is snapshotted first. A target that resolves
+outside the project, through `..` or a symlink, is refused.
+
+==============================================================================
+4. CONFIGURATION                                                *strata-config*
+
+`setup()` is optional. Call it to change defaults: >lua
+
+  require("strata").setup({
+    dir = vim.fn.stdpath("state") .. "/strata",
+    root_markers = { ".git" },
+    exclude = {},            -- globs added to the defaults, never replacing
+    max_size = 1024 * 1024,  -- bytes
+    on_focus_lost = true,
+    git_labels = true,
+    keep_days = 30,
+    max_per_file = 100,
+    keys = {
+      diff = "<CR>",
+      restore = "r",
+      restore_all = "R",
+      open = "o",
+      quilt = "Q",
+      close = "q",
+    },
+  })
+<
+                                                              *strata-exclude*
+`exclude` globs use |vim.glob| syntax and match the absolute path. The
+defaults cover secrets and noise: `.env` and `.env.*`, `*.pem`, `*.key`,
+`*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `id_rsa*`, `id_ecdsa*`,
+`id_ed25519*`, `*.secret`, `*secrets*`, `*credentials*`, `.netrc`,
+`.npmrc`, `.pypirc`, `.aws/`, `.ssh/`, `.gnupg/`, `.git/`, `node_modules/`,
+`dist/`, `build/`, `*.lock`, `package-lock.json`, `pnpm-lock.yaml`,
+`yarn.lock`. User globs are added to this list.
+
+                                                           *strata-git-labels*
+With `git_labels`, strata watches the project's `.git` directory (or the
+worktree's git dir) and adds a label when HEAD resolves to a different
+commit (`git: checkout main @abc1234`) or when `ORIG_HEAD` is written
+(`git: reset/merge/rebase ...`). Events are coalesced over 200 ms. HEAD is
+resolved from files, no `git` process runs.
+
+                                                            *strata-retention*
+Pruning runs once per store per session, three seconds after the first
+snapshot, and on |:Strata| `prune`. Entries older than `keep_days` and
+entries beyond `max_per_file` per path are dropped, then objects nothing
+refers to are deleted. The latest snapshot of every path is always kept so
+deleted files stay recoverable.
+
+==============================================================================
+5. HOW IT WORKS                                                *strata-storage*
+
+`dir` holds one store per project: `<sha256(root)[1..16]>/` with
+
+  root           the absolute project path
+  objects/<sha>  file contents, named by sha256, written once
+  log.jsonl      one JSON object per line, appended with O_APPEND
+
+Snapshot entries look like `{"t":1699999999,"e":"save","p":"src/a.lua",
+"h":"<sha256>","s":1234}`; labels like `{"t":...,"e":"label","l":"text"}`.
+Several Neovim instances can append to the same log. Readers re-read when
+the log size changes. Directories are created with mode 0700.
+
+==============================================================================
+6. LIMITS                                                       *strata-limits*
+
+- Only files Neovim has opened or saved are tracked. A file an agent created
+  and nobody opened has no history.
+- `FocusLost` depends on the terminal sending focus events.
+- A restore of a whole moment never deletes files that were added since.
+- Objects are not compressed. Deduplication and pruning bound the size.
+
+vim:tw=78:ts=8:ft=help:norl:
