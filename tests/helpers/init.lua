@@ -5,7 +5,8 @@ local H = {}
 function H.tmpdir()
   local dir = vim.fn.tempname()
   vim.fn.mkdir(dir, "p")
-  return dir
+  -- realpath: macOS tempnames live under /var, Neovim names buffers under /private/var
+  return vim.uv.fs_realpath(dir) or dir
 end
 
 function H.write(path, content)
